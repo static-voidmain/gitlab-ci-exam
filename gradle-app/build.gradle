@@ -1,0 +1,37 @@
+plugins {
+    id 'java'
+    id 'war'
+    id 'jacoco'
+    id 'org.springframework.boot' version '3.2.4'
+    id 'io.spring.dependency-management' version '1.1.4'
+    id 'org.cyclonedx.bom' version '1.8.0'
+}
+
+group = 'com.example'
+version = '1.0.0'
+sourceCompatibility = '17'
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.mockito:mockito-core:5.5.0'
+}
+
+tasks.withType(Test) {
+    useJUnitPlatform()
+}
+
+jacoco {
+    toolVersion = '0.8.11'
+}
+
+tasks.register('coverageReport', JacocoReport) {
+    dependsOn(tasks.test)
+    reports {
+        xml.required.set(true)
+        html.required.set(false)
+    }
+    sourceDirectories.setFrom(files('src/main/java'))
+    classDirectories.setFrom(fileTree('build/classes/java/main'))
+    executionData.setFrom(fileTree(buildDir).include('jacoco/test.exec'))
+}

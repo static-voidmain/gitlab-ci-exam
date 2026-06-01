@@ -1,0 +1,16 @@
+# Build output
+**/target/
+**/build/
+**/out/
+**/.gradle/
+**/.idea/
+**/.settings/
+**/*.iml
+
+# GitLab CI cache
+# **/.gitlab-ci.yml
+
+# Temporary files
+*.log
+*.tmp
+*.bak

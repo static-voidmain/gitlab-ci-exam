@@ -1,0 +1,92 @@
+stages:
+  - build
+  - coverage
+  - sbom
+  - scan
+  - release
+
+variables:
+  MAVEN_CLI_OPTS: '-B -q'
+  CODE_COVERAGE_MIN: '80'
+  CODERAY_API_URL: 'https://coderay.example.com/api'
+  DEPENDENCY_TRACK_URL: 'https://dependency-track.example.com'
+
+maven-build:
+  stage: build
+  image: maven:3.8.7-openjdk-17
+  script:
+    - cd maven-app
+    - mvn $MAVEN_CLI_OPTS clean verify
+    - |
+      line=$(grep '<counter type="LINE"' target/site/jacoco/jacoco.xml || true)
+      missed=$(echo "$line" | sed -E 's/.*missed="([0-9]+)".*/\1/')
+      covered=$(echo "$line" | sed -E 's/.*covered="([0-9]+)".*/\1/')
+      total=$((missed + covered))
+      percent=$(awk "BEGIN { if ($total == 0) print 0; else printf \"%.2f\", ($covered / $total) * 100 }")
+      echo "Line coverage: $percent%"
+  artifacts:
+    paths:
+      - maven-app/target/*.war
+      - maven-app/target/site/jacoco/*
+    expire_in: 1 week
+  coverage: '/Line coverage: (\d+\.\d+)%/'
+  rules:
+    - changes:
+        - maven-app/**/*
+      when: on_success
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: on_success
+    - when: never
+
+coverage-check:
+  stage: coverage
+  image: maven:3.8.7-openjdk-17
+  script:
+    - bash scripts/check_coverage.sh maven-app/target/site/jacoco/jacoco.xml
+  rules:
+    - changes:
+        - maven-app/**/*
+      when: on_success
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: on_success
+    - when: never
+
+sbom-check:
+  stage: sbom
+  image: maven:3.8.7-openjdk-17
+  script:
+    - cd maven-app
+    - mvn -B org.cyclonedx:cyclonedx-maven-plugin:2.7.4:makeAggregateBom -DskipTests
+    - cp target/bom.xml $CI_PROJECT_DIR/sbom-maven.xml
+  artifacts:
+    paths:
+      - sbom-maven.xml
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^feature\/|^release\/|^hotfix\//'
+      when: on_success
+    - when: never
+
+coderay-scan:
+  stage: scan
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache bash curl jq
+  script:
+    - bash scripts/coderay_scan.sh
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME =~ /^release\//'
+      when: on_success
+    - when: never
+
+version-bump:
+  stage: release
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache bash git
+  script:
+    - bash scripts/version_bump.sh "$VERSION"
+    - git tag -a "v$VERSION" -m "Release v$VERSION"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+    - when: never

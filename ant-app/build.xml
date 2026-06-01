@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project name="ant-app" default="jar" basedir=".">
+    <property name="project.version" value="1.0.0" />
+    <property name="src.dir" value="src/main/java" />
+    <property name="test.src.dir" value="src/test/java" />
+    <property name="build.dir" value="build" />
+    <property name="classes.dir" value="${build.dir}/classes" />
+    <property name="test.classes.dir" value="${build.dir}/test-classes" />
+    <property name="lib.dir" value="lib" />
+    <property name="report.dir" value="${build.dir}/reports/jacoco" />
+
+    <target name="init">
+        <mkdir dir="${classes.dir}" />
+        <mkdir dir="${test.classes.dir}" />
+        <mkdir dir="${lib.dir}" />
+        <mkdir dir="${report.dir}" />
+    </target>
+
+    <target name="resolve-deps" depends="init">
+        <echo message="Downloading Ant dependencies..." />
+        <get src="https://repo1.maven.org/maven2/junit/junit/4.13.2/junit-4.13.2.jar" destfile="${lib.dir}/junit-4.13.2.jar" verbose="false" />
+        <get src="https://repo1.maven.org/maven2/org/hamcrest/hamcrest-core/1.3/hamcrest-core-1.3.jar" destfile="${lib.dir}/hamcrest-core-1.3.jar" verbose="false" />
+        <get src="https://repo1.maven.org/maven2/org/mockito/mockito-core/5.5.0/mockito-core-5.5.0.jar" destfile="${lib.dir}/mockito-core-5.5.0.jar" verbose="false" />
+        <get src="https://repo1.maven.org/maven2/net/bytebuddy/byte-buddy/1.14.8/byte-buddy-1.14.8.jar" destfile="${lib.dir}/byte-buddy-1.14.8.jar" verbose="false" />
+        <get src="https://repo1.maven.org/maven2/org/objenesis/objenesis/3.3.0/objenesis-3.3.0.jar" destfile="${lib.dir}/objenesis-3.3.0.jar" verbose="false" />
+        <get src="https://repo1.maven.org/maven2/org/jacoco/org.jacoco.agent/0.8.11/org.jacoco.agent-0.8.11-runtime.jar" destfile="${lib.dir}/jacocoagent.jar" verbose="false" />
+        <get src="https://repo1.maven.org/maven2/org/jacoco/org.jacoco.cli/0.8.11/org.jacoco.cli-0.8.11.jar" destfile="${lib.dir}/jacococli.jar" verbose="false" />
+    </target>
+
+    <target name="compile" depends="resolve-deps">
+        <javac srcdir="${src.dir}" destdir="${classes.dir}" includeantruntime="false" source="17" target="17">
+            <classpath>
+                <fileset dir="${lib.dir}" includes="*.jar" />
+            </classpath>
+        </javac>
+    </target>
+
+    <target name="test-compile" depends="compile">
+        <javac srcdir="${test.src.dir}" destdir="${test.classes.dir}" includeantruntime="false" source="17" target="17">
+            <classpath>
+                <pathelement path="${classes.dir}" />
+                <fileset dir="${lib.dir}" includes="*.jar" />
+            </classpath>
+        </javac>
+    </target>
+
+    <target name="jar" depends="compile">
+        <jar destfile="${build.dir}/ant-app-${project.version}.jar" basedir="${classes.dir}" />
+    </target>
+
+    <target name="war" depends="compile">
+        <war destfile="${build.dir}/ant-app-${project.version}.war" webxml="web/WEB-INF/web.xml">
+            <fileset dir="${classes.dir}" />
+        </war>
+    </target>
+
+    <target name="test" depends="test-compile">
+        <java classname="org.junit.runner.JUnitCore" fork="true" failonerror="true">
+            <classpath>
+                <pathelement path="${test.classes.dir}" />
+                <pathelement path="${classes.dir}" />
+                <fileset dir="${lib.dir}" includes="*.jar" />
+            </classpath>
+            <arg value="com.example.antdemo.service.ClientServiceTest" />
+        </java>
+    </target>
+
+    <target name="coverage-report" depends="test-compile">
+        <java classname="org.junit.runner.JUnitCore" fork="true" failonerror="true">
+            <jvmarg value="-javaagent:${lib.dir}/jacocoagent.jar=destfile=${build.dir}/jacoco.exec,append=false" />
+            <classpath>
+                <pathelement path="${test.classes.dir}" />
+                <pathelement path="${classes.dir}" />
+                <fileset dir="${lib.dir}" includes="*.jar" />
+            </classpath>
+            <arg value="com.example.antdemo.service.ClientServiceTest" />
+        </java>
+        <java classname="org.jacoco.cli.internal.Main" fork="true" failonerror="true">
+            <classpath>
+                <pathelement path="${lib.dir}/jacococli.jar" />
+            </classpath>
+            <arg line="report ${build.dir}/jacoco.exec --classfiles ${classes.dir} --sourcefiles src/main/java --xml ${build.dir}/reports/jacoco/jacoco.xml" />
+        </java>
+    </target>
+</project>

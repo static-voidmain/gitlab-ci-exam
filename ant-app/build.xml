@@ -9,6 +9,10 @@
     <property name="lib.dir" value="lib" />
     <property name="report.dir" value="${build.dir}/reports/jacoco" />
 
+    <target name="clean">
+        <delete dir="${build.dir}" />
+    </target>
+
     <target name="init">
         <mkdir dir="${classes.dir}" />
         <mkdir dir="${test.classes.dir}" />

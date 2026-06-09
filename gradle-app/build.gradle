@@ -3,35 +3,51 @@ plugins {
     id 'war'
     id 'jacoco'
     id 'org.springframework.boot' version '3.2.4'
-    id 'io.spring.dependency-management' version '1.1.4'
     id 'org.cyclonedx.bom' version '1.8.0'
 }
 
 group = 'com.example'
 version = '1.0.0'
-sourceCompatibility = '17'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
 
 dependencies {
+    implementation platform(org.springframework.boot.gradle.plugin.SpringBootPlugin.BOM_COORDINATES)
+    testImplementation platform(org.springframework.boot.gradle.plugin.SpringBootPlugin.BOM_COORDINATES)
+
     implementation 'org.springframework.boot:spring-boot-starter-web'
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.mockito:mockito-core:5.5.0'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
-tasks.withType(Test) {
+tasks.withType(Test).configureEach {
     useJUnitPlatform()
+    finalizedBy(tasks.named('jacocoTestReport'))
 }
 
 jacoco {
     toolVersion = '0.8.11'
 }
 
-tasks.register('coverageReport', JacocoReport) {
-    dependsOn(tasks.test)
+tasks.named('jacocoTestReport', JacocoReport) {
+    dependsOn(tasks.named('test'))
+
     reports {
         xml.required.set(true)
-        html.required.set(false)
+        html.required.set(true)
+        csv.required.set(false)
     }
-    sourceDirectories.setFrom(files('src/main/java'))
-    classDirectories.setFrom(fileTree('build/classes/java/main'))
-    executionData.setFrom(fileTree(buildDir).include('jacoco/test.exec'))
+}
+
+tasks.register('coverageReport') {
+    dependsOn(tasks.named('jacocoTestReport'))
 }

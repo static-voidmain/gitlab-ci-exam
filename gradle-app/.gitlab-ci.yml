@@ -3,20 +3,23 @@ stages:
   - coverage
   - sbom
   - scan
+  - publish
   - release
 
 variables:
   GRADLE_OPTS: '-Dorg.gradle.daemon=false -q'
   CODE_COVERAGE_MIN: '80'
-  CODERAY_API_URL: 'https://coderay.example.com/api'
+  CODERAY_TIMEOUT_SECONDS: '1800'
+  CODERAY_POLL_INTERVAL_SECONDS: '15'
   DEPENDENCY_TRACK_URL: 'https://dependency-track.example.com'
+  NEXUS_REPOSITORY_FORMAT: 'maven2'
 
 gradle-build:
   stage: build
   image: gradle:8.4.1-jdk17
   script:
     - cd gradle-app
-    - gradle clean test jacocoTestReport --no-daemon
+    - gradle clean test jacocoTestReport bootWar --no-daemon
     - |
       line=$(grep '<counter type="LINE"' build/reports/jacoco/test/jacocoTestReport.xml || true)
       missed=$(echo "$line" | sed -E 's/.*missed="([0-9]+)".*/\1/')
@@ -73,9 +76,34 @@ coderay-scan:
     - apk add --no-cache bash curl jq
   script:
     - bash scripts/coderay_scan.sh
+  artifacts:
+    when: always
+    paths:
+      - coderay-xg-results/
+    expire_in: 1 week
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME =~ /^release\//'
       when: on_success
+    - when: never
+
+nexus-upload:
+  stage: publish
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache bash curl
+  dependencies:
+    - gradle-build
+  variables:
+    NEXUS_PROJECT_DIR: 'gradle-app'
+  script:
+    - bash scripts/upload_to_nexus.sh
+  rules:
+    - if: '$NEXUS_UPLOAD_ENABLED == "true" && $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"'
+      when: manual
+    - if: '$NEXUS_UPLOAD_ENABLED == "true" && $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^release\//'
+      changes:
+        - gradle-app/**/*
+      when: manual
     - when: never
 
 version-bump:

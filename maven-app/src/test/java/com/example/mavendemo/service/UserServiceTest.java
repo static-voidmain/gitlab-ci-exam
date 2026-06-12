@@ -11,6 +11,7 @@ import java.math.BigDecimal;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class UserServiceTest {
     @Test
@@ -41,5 +42,36 @@ class UserServiceTest {
         UserService service = new UserService(repository, paymentClient);
         assertThat(service.calculateFutureBalance("user-2", new BigDecimal("50.00")))
                 .isEqualByComparingTo(new BigDecimal("200.00"));
+    }
+
+    @Test
+    void getUserSummaryReturnsReviewWhenPaymentNotAuthorized() {
+        UserRepository repository = Mockito.mock(UserRepository.class);
+        PaymentGatewayClient paymentClient = Mockito.mock(PaymentGatewayClient.class);
+
+        User sample = new User("user-3", "Carol", new BigDecimal("350.00"));
+        Mockito.when(repository.findById("user-3")).thenReturn(Optional.of(sample));
+        Mockito.when(paymentClient.authorizeCharge("user-3", sample.getOutstandingBalance())).thenReturn(false);
+
+        UserService service = new UserService(repository, paymentClient);
+        UserSummary summary = service.getUserSummary("user-3");
+
+        assertThat(summary.getStatus()).isEqualTo("REVIEW");
+        assertThat(summary.getId()).isEqualTo("user-3");
+        assertThat(summary.getName()).isEqualTo("Carol");
+    }
+
+    @Test
+    void getUserSummaryThrowsWhenUserMissing() {
+        UserRepository repository = Mockito.mock(UserRepository.class);
+        PaymentGatewayClient paymentClient = Mockito.mock(PaymentGatewayClient.class);
+
+        Mockito.when(repository.findById("missing-user")).thenReturn(Optional.empty());
+
+        UserService service = new UserService(repository, paymentClient);
+
+        assertThatThrownBy(() -> service.getUserSummary("missing-user"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Unknown user missing-user");
     }
 }

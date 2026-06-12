@@ -1,5 +1,6 @@
 package com.example.antdemo.service;
 
+import com.example.antdemo.App;
 import com.example.antdemo.external.NotificationService;
 import com.example.antdemo.model.Client;
 import com.example.antdemo.repository.ClientRepository;
@@ -8,6 +9,7 @@ import org.mockito.Mockito;
 
 import java.util.Optional;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
@@ -36,5 +38,18 @@ public class ClientServiceTest {
 
         ClientService service = new ClientService(repository, notificationService);
         assertFalse(service.notifyClient("client-2"));
+    }
+
+    @Test
+    public void clientGettersReturnConstructorValues() {
+        Client client = new Client("client-3", "Getter User");
+
+        assertEquals("client-3", client.getId());
+        assertEquals("Getter User", client.getName());
+    }
+
+    @Test
+    public void appMainRunsDemoFlow() {
+        App.main(new String[0]);
     }
 }

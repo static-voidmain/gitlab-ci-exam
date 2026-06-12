@@ -22,17 +22,18 @@
 
     <target name="resolve-deps" depends="init">
         <echo message="Downloading Ant dependencies..." />
-        <get src="https://repo1.maven.org/maven2/junit/junit/4.13.2/junit-4.13.2.jar" destfile="${lib.dir}/junit-4.13.2.jar" verbose="false" />
-        <get src="https://repo1.maven.org/maven2/org/hamcrest/hamcrest-core/1.3/hamcrest-core-1.3.jar" destfile="${lib.dir}/hamcrest-core-1.3.jar" verbose="false" />
-        <get src="https://repo1.maven.org/maven2/org/mockito/mockito-core/5.5.0/mockito-core-5.5.0.jar" destfile="${lib.dir}/mockito-core-5.5.0.jar" verbose="false" />
-        <get src="https://repo1.maven.org/maven2/net/bytebuddy/byte-buddy/1.14.8/byte-buddy-1.14.8.jar" destfile="${lib.dir}/byte-buddy-1.14.8.jar" verbose="false" />
-        <get src="https://repo1.maven.org/maven2/org/objenesis/objenesis/3.3.0/objenesis-3.3.0.jar" destfile="${lib.dir}/objenesis-3.3.0.jar" verbose="false" />
-        <get src="https://repo1.maven.org/maven2/org/jacoco/org.jacoco.agent/0.8.11/org.jacoco.agent-0.8.11-runtime.jar" destfile="${lib.dir}/jacocoagent.jar" verbose="false" />
-        <get src="https://repo1.maven.org/maven2/org/jacoco/org.jacoco.cli/0.8.11/org.jacoco.cli-0.8.11.jar" destfile="${lib.dir}/jacococli.jar" verbose="false" />
+        <get src="https://repo1.maven.org/maven2/junit/junit/4.13.2/junit-4.13.2.jar" dest="${lib.dir}/junit-4.13.2.jar" verbose="false" />
+        <get src="https://repo1.maven.org/maven2/org/hamcrest/hamcrest-core/1.3/hamcrest-core-1.3.jar" dest="${lib.dir}/hamcrest-core-1.3.jar" verbose="false" />
+        <get src="https://repo1.maven.org/maven2/org/mockito/mockito-core/5.5.0/mockito-core-5.5.0.jar" dest="${lib.dir}/mockito-core-5.5.0.jar" verbose="false" />
+        <get src="https://repo1.maven.org/maven2/net/bytebuddy/byte-buddy/1.14.8/byte-buddy-1.14.8.jar" dest="${lib.dir}/byte-buddy-1.14.8.jar" verbose="false" />
+        <get src="https://repo1.maven.org/maven2/net/bytebuddy/byte-buddy-agent/1.14.8/byte-buddy-agent-1.14.8.jar" dest="${lib.dir}/byte-buddy-agent-1.14.8.jar" verbose="false" />
+        <get src="https://repo1.maven.org/maven2/org/objenesis/objenesis/3.3/objenesis-3.3.jar" dest="${lib.dir}/objenesis-3.3.jar" verbose="false" />
+        <get src="https://repo1.maven.org/maven2/org/jacoco/org.jacoco.agent/0.8.11/org.jacoco.agent-0.8.11-runtime.jar" dest="${lib.dir}/jacocoagent.jar" verbose="false" />
+        <get src="https://repo1.maven.org/maven2/org/jacoco/org.jacoco.cli/0.8.11/org.jacoco.cli-0.8.11-nodeps.jar" dest="${lib.dir}/jacococli.jar" verbose="false" />
     </target>
 
     <target name="compile" depends="resolve-deps">
-        <javac srcdir="${src.dir}" destdir="${classes.dir}" includeantruntime="false" source="17" target="17">
+        <javac srcdir="${src.dir}" destdir="${classes.dir}" includeantruntime="false" source="17" target="17" debug="true">
             <classpath>
                 <fileset dir="${lib.dir}" includes="*.jar" />
             </classpath>
@@ -40,7 +41,7 @@
     </target>
 
     <target name="test-compile" depends="compile">
-        <javac srcdir="${test.src.dir}" destdir="${test.classes.dir}" includeantruntime="false" source="17" target="17">
+        <javac srcdir="${test.src.dir}" destdir="${test.classes.dir}" includeantruntime="false" source="17" target="17" debug="true">
             <classpath>
                 <pathelement path="${classes.dir}" />
                 <fileset dir="${lib.dir}" includes="*.jar" />

@@ -7,8 +7,38 @@
 - `maven-app`: Spring Boot WAR 형태 프로젝트
 - `gradle-app`: Spring Boot WAR 형태 프로젝트
 - `ant-app`: Ant 기반 Java 애플리케이션과 테스트
-- `gitlab-ci.yml`: GitLab CI 파이프라인 정의
-- `scripts/`: 버전 bump, CodeRay 스캔, 커버리지/ SBOM 샘플 스크립트
+- `.gitlab-ci.yml`: 이 템플릿 저장소 자체를 검증하는 로컬 파이프라인 정의
+- `ci/common.yml`: 하위 프로젝트가 include할 공통 stage/기본 변수 정의
+- `ci/build.yml`: 하위 프로젝트가 include할 Maven/Gradle/Ant 빌드 job 정의
+- `scripts/*.yml`: 하위 프로젝트가 include할 커버리지, SBOM, CodeRay XG, Nexus, version bump job 정의
+- `examples/child-project.gitlab-ci.yml`: 하위 프로젝트 `.gitlab-ci.yml` 예시
+- `scripts/*.sh`: 로컬 테스트용 원본 스크립트이며, 하위 프로젝트 CI 실행에는 필요하지 않습니다.
+
+## 하위 프로젝트에서 상위 그룹 템플릿 참조
+
+상위 그룹에 공통 CI 템플릿 프로젝트를 두고, 하위 프로젝트의 `.gitlab-ci.yml`에서 `include:project`로 참조합니다.
+
+```yaml
+include:
+  - project: 'platform/gitlab-ci-templates'
+    ref: 'main'
+    file:
+      - '/ci/common.yml'
+      - '/ci/build.yml'
+      - '/scripts/check_coverage.yml'
+      - '/scripts/generate_sbom.yml'
+      - '/scripts/coderay_scan.yml'
+      - '/scripts/upload_to_nexus.yml'
+      - '/scripts/version_bump.yml'
+
+variables:
+  MAVEN_PROJECT_DIR: '.'
+  MAVEN_BUILD_ENABLED: 'true'
+  MAVEN_COVERAGE_ENABLED: 'true'
+  MAVEN_SBOM_ENABLED: 'true'
+```
+
+`project` 값은 실제 상위 그룹 템플릿 프로젝트 경로로 바꾸고, `ref`는 운영에서 태그나 고정 브랜치로 관리하는 것을 권장합니다. 하위 프로젝트에는 `scripts/*.sh`가 없어도 되며, include된 YAML job 안에 실행 로직이 포함되어 있습니다.
 
 ## 요구 사항
 

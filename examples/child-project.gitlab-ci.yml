@@ -1,0 +1,57 @@
+# 하위 프로젝트 .gitlab-ci.yml 예시입니다.
+# include.project에는 상위 그룹의 공통 CI 템플릿 프로젝트 경로를 넣으세요.
+# 예: platform/gitlab-ci-templates
+
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: always
+    - if: '$CI_COMMIT_TAG'
+      when: always
+    - if: '$CI_COMMIT_BRANCH'
+      when: always
+    - when: never
+
+include:
+  - project: 'platform/gitlab-ci-templates'
+    ref: 'main'
+    file:
+      - '/ci/common.yml'
+      - '/ci/build.yml'
+      - '/scripts/check_coverage.yml'
+      - '/scripts/generate_sbom.yml'
+      - '/scripts/coderay_scan.yml'
+      - '/scripts/upload_to_nexus.yml'
+      - '/scripts/version_bump.yml'
+
+variables:
+  # Maven 프로젝트가 저장소 루트에 있는 경우의 예시입니다.
+  MAVEN_PROJECT_DIR: '.'
+  MAVEN_BUILD_ENABLED: 'true'
+  MAVEN_COVERAGE_ENABLED: 'true'
+  MAVEN_SBOM_ENABLED: 'true'
+
+  # Gradle/Ant 프로젝트는 필요한 경우에만 true로 켜세요.
+  GRADLE_BUILD_ENABLED: 'false'
+  GRADLE_COVERAGE_ENABLED: 'false'
+  GRADLE_SBOM_ENABLED: 'false'
+  ANT_BUILD_ENABLED: 'false'
+  ANT_COVERAGE_ENABLED: 'false'
+  ANT_SBOM_ENABLED: 'false'
+
+  CODE_COVERAGE_MIN: '80'
+
+  # 필요하면 프로젝트별 runner 정책에 맞는 검증된 이미지로 덮어쓰세요.
+  MAVEN_IMAGE: 'maven:3.9.9-eclipse-temurin-17'
+  GRADLE_IMAGE: 'gradle:8.4-jdk17'
+  ANT_IMAGE: 'eclipse-temurin:17-jdk-jammy'
+
+  # Nexus 업로드는 protected/masked 변수 NEXUS_URL, NEXUS_REPOSITORY,
+  # NEXUS_USERNAME, NEXUS_PASSWORD를 설정한 뒤 true로 켜세요.
+  NEXUS_UPLOAD_ENABLED: 'false'
+
+  # CodeRay XG는 CODERAY_CLI_COMMAND와 GitLab token 변수를 설정한 뒤 true로 켜세요.
+  CODERAY_SCAN_ENABLED: 'false'
+
+  # version bump/tag job은 릴리스 운영 방식이 정해진 프로젝트에서만 true로 켜세요.
+  VERSION_BUMP_ENABLED: 'false'

@@ -1,0 +1,82 @@
+maven-sbom-check:
+  stage: sbom
+  image: $MAVEN_IMAGE
+  script:
+    - cd "$MAVEN_PROJECT_DIR"
+    - mvn -B org.cyclonedx:cyclonedx-maven-plugin:2.7.4:makeAggregateBom -DskipTests
+    - cp target/bom.xml "$CI_PROJECT_DIR/sbom-maven.xml"
+  artifacts:
+    paths:
+      - sbom-maven.xml
+    expire_in: 1 week
+  rules:
+    - if: '$MAVEN_SBOM_ENABLED == "true"'
+      when: on_success
+    - when: never
+
+gradle-sbom-check:
+  stage: sbom
+  image: $GRADLE_IMAGE
+  script:
+    - cd "$GRADLE_PROJECT_DIR"
+    - gradle -q cyclonedxBom $GRADLE_CLI_OPTS
+    - cp build/reports/bom.xml "$CI_PROJECT_DIR/sbom-gradle.xml"
+  artifacts:
+    paths:
+      - sbom-gradle.xml
+    expire_in: 1 week
+  rules:
+    - if: '$GRADLE_SBOM_ENABLED == "true"'
+      when: on_success
+    - when: never
+
+ant-sbom-check:
+  stage: sbom
+  image: $CI_UTILITY_IMAGE
+  before_script:
+    - apk add --no-cache bash sed
+  script:
+    - |
+      set -euo pipefail
+
+      build_file="${ANT_PROJECT_DIR%/}/build.xml"
+
+      if [[ ! -f "$build_file" ]]; then
+        echo "Ant build.xml 파일이 없습니다. file=$build_file"
+        exit 1
+      fi
+
+      project_name="${ANT_SBOM_NAME:-$(sed -n "s/.*<project[[:space:]][^>]*name=[\"']\([^\"']*\)[\"'][^>]*.*/\1/p" "$build_file" | head -n 1)}"
+      project_version="${ANT_SBOM_VERSION:-$(sed -n "s/.*<property[[:space:]][^>]*name=[\"']project.version[\"'][^>]*value=[\"']\([^\"']*\)[\"'][^>]*.*/\1/p" "$build_file" | head -n 1)}"
+      group_id="${ANT_SBOM_GROUP_ID:-com.example}"
+
+      if [[ -z "$project_name" ]]; then
+        project_name="$(basename "$ANT_PROJECT_DIR")"
+      fi
+
+      if [[ -z "$project_version" ]]; then
+        project_version="0.0.0"
+      fi
+
+      cat > "$CI_PROJECT_DIR/sbom-ant.xml" <<EOF
+      <?xml version="1.0" encoding="UTF-8"?>
+      <bom xmlns="http://cyclonedx.org/schema/bom/1.4" version="1">
+        <components>
+          <component type="application">
+            <name>${project_name}</name>
+            <version>${project_version}</version>
+            <purl>pkg:maven/${group_id}/${project_name}@${project_version}</purl>
+          </component>
+        </components>
+      </bom>
+      EOF
+
+      echo "Generated sbom-ant.xml"
+  artifacts:
+    paths:
+      - sbom-ant.xml
+    expire_in: 1 week
+  rules:
+    - if: '$ANT_SBOM_ENABLED == "true"'
+      when: on_success
+    - when: never

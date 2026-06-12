@@ -1,0 +1,112 @@
+.coverage-check-template:
+  stage: coverage
+  image: $CI_UTILITY_IMAGE
+  before_script:
+    - apk add --no-cache bash grep sed gawk
+  script:
+    - |
+      set -euo pipefail
+
+      min="${CODE_COVERAGE_MIN:-80}"
+
+      if ! [[ "$min" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+        echo "CODE_COVERAGE_MIN 값은 숫자여야 합니다. current=$min"
+        exit 1
+      fi
+
+      case "${COVERAGE_REPORT_KIND:-custom}" in
+        maven)
+          report_path="${MAVEN_COVERAGE_REPORT_PATH:-${MAVEN_PROJECT_DIR%/}/target/site/jacoco/jacoco.xml}"
+          ;;
+        gradle)
+          report_path="${GRADLE_COVERAGE_REPORT_PATH:-${GRADLE_PROJECT_DIR%/}/build/reports/jacoco/test/jacocoTestReport.xml}"
+          ;;
+        ant)
+          report_path="${ANT_COVERAGE_REPORT_PATH:-${ANT_PROJECT_DIR%/}/build/reports/jacoco/jacoco.xml}"
+          ;;
+        custom)
+          report_path="${COVERAGE_REPORT_PATH:-}"
+          ;;
+        *)
+          echo "지원하지 않는 COVERAGE_REPORT_KIND 값입니다. current=${COVERAGE_REPORT_KIND}"
+          exit 1
+          ;;
+      esac
+
+      if [[ -z "$report_path" ]]; then
+        echo "COVERAGE_REPORT_PATH 또는 COVERAGE_REPORT_KIND 환경 변수가 필요합니다."
+        exit 1
+      fi
+
+      if [[ ! -f "$report_path" ]]; then
+        echo "Coverage report not found: $report_path"
+        exit 1
+      fi
+
+      line="$(grep '<counter type="LINE"' "$report_path" | head -n 1 || true)"
+
+      if [[ -z "$line" ]]; then
+        echo "LINE coverage counter를 찾을 수 없습니다. report=$report_path"
+        exit 1
+      fi
+
+      missed="$(echo "$line" | sed -E 's/.*missed="([0-9]+)".*/\1/')"
+      covered="$(echo "$line" | sed -E 's/.*covered="([0-9]+)".*/\1/')"
+
+      if ! [[ "$missed" =~ ^[0-9]+$ && "$covered" =~ ^[0-9]+$ ]]; then
+        echo "Coverage counter 파싱에 실패했습니다. line=$line"
+        exit 1
+      fi
+
+      total=$((missed + covered))
+      percent="$(awk "BEGIN { if ($total == 0) print 0; else printf \"%.2f\", ($covered / $total) * 100 }")"
+
+      echo "Report: $report_path -> Line coverage: $percent%"
+
+      ok="$(awk "BEGIN { print ($percent >= $min) ? 1 : 0 }")"
+
+      if [[ "$ok" -ne 1 ]]; then
+        echo "Coverage gate failed: $percent% < $min%"
+        exit 1
+      fi
+
+      echo "Coverage gate passed for $report_path"
+
+maven-coverage-check:
+  extends: .coverage-check-template
+  needs:
+    - job: maven-build
+      artifacts: true
+      optional: true
+  variables:
+    COVERAGE_REPORT_KIND: 'maven'
+  rules:
+    - if: '$MAVEN_COVERAGE_ENABLED == "true"'
+      when: on_success
+    - when: never
+
+gradle-coverage-check:
+  extends: .coverage-check-template
+  needs:
+    - job: gradle-build
+      artifacts: true
+      optional: true
+  variables:
+    COVERAGE_REPORT_KIND: 'gradle'
+  rules:
+    - if: '$GRADLE_COVERAGE_ENABLED == "true"'
+      when: on_success
+    - when: never
+
+ant-coverage-check:
+  extends: .coverage-check-template
+  needs:
+    - job: ant-build
+      artifacts: true
+      optional: true
+  variables:
+    COVERAGE_REPORT_KIND: 'ant'
+  rules:
+    - if: '$ANT_COVERAGE_ENABLED == "true"'
+      when: on_success
+    - when: never

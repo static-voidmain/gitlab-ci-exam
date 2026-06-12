@@ -4,6 +4,7 @@
 **/build/
 **/out/
 **/.gradle/
+ant-app/lib/
 **/.idea/
 **/.settings/
 **/*.iml

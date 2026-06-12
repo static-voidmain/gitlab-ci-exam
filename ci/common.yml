@@ -1,0 +1,44 @@
+stages:
+  - build
+  - coverage
+  - sbom
+  - scan
+  - publish
+  - release
+
+variables:
+  MAVEN_IMAGE: 'maven:3.9.9-eclipse-temurin-17'
+  GRADLE_IMAGE: 'gradle:8.4-jdk17'
+  ANT_IMAGE: 'eclipse-temurin:17-jdk-jammy'
+  CI_UTILITY_IMAGE: 'alpine:3.20'
+
+  MAVEN_CLI_OPTS: '-B -q'
+  GRADLE_CLI_OPTS: '--no-daemon'
+
+  MAVEN_PROJECT_DIR: 'maven-app'
+  GRADLE_PROJECT_DIR: 'gradle-app'
+  ANT_PROJECT_DIR: 'ant-app'
+
+  MAVEN_BUILD_ENABLED: 'false'
+  GRADLE_BUILD_ENABLED: 'false'
+  ANT_BUILD_ENABLED: 'false'
+
+  MAVEN_COVERAGE_ENABLED: 'false'
+  GRADLE_COVERAGE_ENABLED: 'false'
+  ANT_COVERAGE_ENABLED: 'false'
+  CODE_COVERAGE_MIN: '80'
+
+  MAVEN_SBOM_ENABLED: 'false'
+  GRADLE_SBOM_ENABLED: 'false'
+  ANT_SBOM_ENABLED: 'false'
+  DEPENDENCY_TRACK_URL: 'https://dependency-track.example.com'
+
+  CODERAY_TIMEOUT_SECONDS: '1800'
+  CODERAY_POLL_INTERVAL_SECONDS: '15'
+  CODERAY_STABLE_SECONDS: '5'
+  CODERAY_SCAN_ENABLED: 'false'
+
+  NEXUS_UPLOAD_ENABLED: 'false'
+  NEXUS_REPOSITORY_FORMAT: 'maven2'
+
+  VERSION_BUMP_ENABLED: 'false'

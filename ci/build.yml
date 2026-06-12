@@ -1,0 +1,78 @@
+maven-build:
+  stage: build
+  image: $MAVEN_IMAGE
+  script:
+    - cd "$MAVEN_PROJECT_DIR"
+    - mvn $MAVEN_CLI_OPTS clean verify
+    - |
+      line=$(grep '<counter type="LINE"' target/site/jacoco/jacoco.xml || true)
+      missed=$(echo "$line" | sed -E 's/.*missed="([0-9]+)".*/\1/')
+      covered=$(echo "$line" | sed -E 's/.*covered="([0-9]+)".*/\1/')
+      total=$((missed + covered))
+      percent=$(awk "BEGIN { if ($total == 0) print 0; else printf \"%.2f\", ($covered / $total) * 100 }")
+      echo "Line coverage: $percent%"
+  artifacts:
+    when: always
+    paths:
+      - $MAVEN_PROJECT_DIR/target/*.war
+      - $MAVEN_PROJECT_DIR/target/site/jacoco/*
+    expire_in: 1 week
+  coverage: '/Line coverage: (\d+\.\d+)%/'
+  rules:
+    - if: '$MAVEN_BUILD_ENABLED == "true"'
+      when: on_success
+    - when: never
+
+gradle-build:
+  stage: build
+  image: $GRADLE_IMAGE
+  script:
+    - cd "$GRADLE_PROJECT_DIR"
+    - gradle clean test jacocoTestReport bootWar $GRADLE_CLI_OPTS
+    - |
+      line=$(grep '<counter type="LINE"' build/reports/jacoco/test/jacocoTestReport.xml || true)
+      missed=$(echo "$line" | sed -E 's/.*missed="([0-9]+)".*/\1/')
+      covered=$(echo "$line" | sed -E 's/.*covered="([0-9]+)".*/\1/')
+      total=$((missed + covered))
+      percent=$(awk "BEGIN { if ($total == 0) print 0; else printf \"%.2f\", ($covered / $total) * 100 }")
+      echo "Line coverage: $percent%"
+  artifacts:
+    when: always
+    paths:
+      - $GRADLE_PROJECT_DIR/build/libs/*.war
+      - $GRADLE_PROJECT_DIR/build/reports/jacoco/test/jacocoTestReport.xml
+    expire_in: 1 week
+  coverage: '/Line coverage: (\d+\.\d+)%/'
+  rules:
+    - if: '$GRADLE_BUILD_ENABLED == "true"'
+      when: on_success
+    - when: never
+
+ant-build:
+  stage: build
+  image: $ANT_IMAGE
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y --no-install-recommends ant curl ca-certificates
+  script:
+    - cd "$ANT_PROJECT_DIR"
+    - ant clean jar coverage-report
+    - |
+      line=$(grep '<counter type="LINE"' build/reports/jacoco/jacoco.xml || true)
+      missed=$(echo "$line" | sed -E 's/.*missed="([0-9]+)".*/\1/')
+      covered=$(echo "$line" | sed -E 's/.*covered="([0-9]+)".*/\1/')
+      total=$((missed + covered))
+      percent=$(awk "BEGIN { if ($total == 0) print 0; else printf \"%.2f\", ($covered / $total) * 100 }")
+      echo "Line coverage: $percent%"
+  artifacts:
+    when: always
+    paths:
+      - $ANT_PROJECT_DIR/build/*.jar
+      - $ANT_PROJECT_DIR/build/jacoco.exec
+      - $ANT_PROJECT_DIR/build/reports/jacoco/jacoco.xml
+    expire_in: 1 week
+  coverage: '/Line coverage: (\d+\.\d+)%/'
+  rules:
+    - if: '$ANT_BUILD_ENABLED == "true"'
+      when: on_success
+    - when: never

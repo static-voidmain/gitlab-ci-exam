@@ -1,0 +1,630 @@
+.nexus-upload-template:
+  stage: publish
+  image: $CI_UTILITY_IMAGE
+  before_script:
+    - apk add --no-cache bash curl grep sed gawk coreutils
+  script:
+    - |
+      set -euo pipefail
+
+      log() {
+        printf '[nexus-upload] %s\n' "$*" >&2
+      }
+
+      die() {
+        log "ERROR: $*"
+        exit 1
+      }
+
+      require_command() {
+        local command_name="$1"
+
+        if ! command -v "$command_name" >/dev/null 2>&1; then
+          die "'$command_name' 명령어가 필요합니다."
+        fi
+      }
+
+      require_env() {
+        local env_name="$1"
+
+        if [[ -z "${!env_name:-}" ]]; then
+          die "$env_name 환경 변수가 필요합니다."
+        fi
+      }
+
+      is_boolean_true() {
+        local value="${1:-}"
+
+        [[ "$value" == "true" || "$value" == "1" || "$value" == "yes" ]]
+      }
+
+      is_positive_integer() {
+        local value="$1"
+
+        [[ "$value" =~ ^[0-9]+$ ]] && ((value > 0))
+      }
+
+      first_xml_tag_value() {
+        local file_path="$1"
+        local tag_name="$2"
+
+        sed -n "s:.*<${tag_name}>\\([^<]*\\)</${tag_name}>.*:\\1:p" "$file_path" | head -n 1
+      }
+
+      maven_project_tag_value() {
+        local file_path="$1"
+        local tag_name="$2"
+
+        awk -v tag_name="$tag_name" '
+          /<parent>/ { in_parent = 1 }
+          /<\/parent>/ { in_parent = 0; next }
+          in_parent { next }
+          {
+            line = $0
+            open_tag = "<" tag_name ">"
+            close_tag = "</" tag_name ">"
+
+            if (index(line, open_tag) > 0 && index(line, close_tag) > 0) {
+              sub(".*<" tag_name ">", "", line)
+              sub("</" tag_name ">.*", "", line)
+              print line
+              exit
+            }
+          }
+        ' "$file_path"
+      }
+
+      gradle_assignment_value() {
+        local file_path="$1"
+        local property_name="$2"
+
+        sed -n "s/^[[:space:]]*${property_name}[[:space:]]*=[[:space:]]*['\"]\\([^'\"]*\\)['\"].*/\\1/p" "$file_path" | head -n 1
+      }
+
+      gradle_properties_value() {
+        local file_path="$1"
+        local property_name="$2"
+
+        sed -n "s/^[[:space:]]*${property_name}[[:space:]]*=[[:space:]]*\\([^[:space:]]*\\).*/\\1/p" "$file_path" | head -n 1
+      }
+
+      ant_property_value() {
+        local file_path="$1"
+        local property_name="$2"
+
+        sed -n "s/.*<property[[:space:]][^>]*name=[\"']${property_name}[\"'][^>]*value=[\"']\\([^\"']*\\)[\"'][^>]*.*/\\1/p" "$file_path" | head -n 1
+      }
+
+      ant_project_name() {
+        local file_path="$1"
+
+        sed -n "s/.*<project[[:space:]][^>]*name=[\"']\\([^\"']*\\)[\"'][^>]*.*/\\1/p" "$file_path" | head -n 1
+      }
+
+      detect_project_dir() {
+        if [[ -n "${NEXUS_PROJECT_DIR:-}" ]]; then
+          printf '%s\n' "${NEXUS_PROJECT_DIR%/}"
+          return 0
+        fi
+
+        case "${NEXUS_PROJECT_KIND:-}" in
+          maven)
+            printf '%s\n' "${MAVEN_PROJECT_DIR%/}"
+            ;;
+          gradle)
+            printf '%s\n' "${GRADLE_PROJECT_DIR%/}"
+            ;;
+          ant)
+            printf '%s\n' "${ANT_PROJECT_DIR%/}"
+            ;;
+          *)
+            printf '%s\n' "."
+            ;;
+        esac
+      }
+
+      detect_build_file() {
+        local project_dir="$1"
+
+        if [[ -n "${NEXUS_BUILD_FILE:-}" ]]; then
+          printf '%s\n' "$NEXUS_BUILD_FILE"
+        elif [[ -f "${project_dir}/pom.xml" ]]; then
+          printf '%s\n' "${project_dir}/pom.xml"
+        elif [[ -f "${project_dir}/build.gradle" ]]; then
+          printf '%s\n' "${project_dir}/build.gradle"
+        elif [[ -f "${project_dir}/build.gradle.kts" ]]; then
+          printf '%s\n' "${project_dir}/build.gradle.kts"
+        elif [[ -f "${project_dir}/build.xml" ]]; then
+          printf '%s\n' "${project_dir}/build.xml"
+        else
+          die "빌드 파일을 찾을 수 없습니다. project_dir=$project_dir"
+        fi
+      }
+
+      detect_build_tool() {
+        local build_file="$1"
+
+        if [[ -n "${NEXUS_BUILD_TOOL:-}" ]]; then
+          printf '%s\n' "$NEXUS_BUILD_TOOL"
+          return 0
+        fi
+
+        case "$(basename "$build_file")" in
+          pom.xml)
+            printf '%s\n' "maven"
+            ;;
+          build.gradle|build.gradle.kts)
+            printf '%s\n' "gradle"
+            ;;
+          build.xml)
+            printf '%s\n' "ant"
+            ;;
+          *)
+            die "지원하지 않는 빌드 파일입니다. file=$build_file"
+            ;;
+        esac
+      }
+
+      resolve_project_version() {
+        local build_tool="$1"
+        local build_file="$2"
+        local project_dir="$3"
+        local version_value=""
+
+        if [[ -n "${NEXUS_PROJECT_VERSION:-}" ]]; then
+          printf '%s\n' "$NEXUS_PROJECT_VERSION"
+          return 0
+        fi
+
+        case "$build_tool" in
+          maven)
+            version_value="$(maven_project_tag_value "$build_file" "version")"
+
+            if [[ -z "$version_value" ]]; then
+              version_value="$(first_xml_tag_value "$build_file" "version")"
+            fi
+            ;;
+          gradle)
+            version_value="$(gradle_assignment_value "$build_file" "version")"
+
+            if [[ -z "$version_value" && -f "${project_dir}/gradle.properties" ]]; then
+              version_value="$(gradle_properties_value "${project_dir}/gradle.properties" "version")"
+            fi
+            ;;
+          ant)
+            version_value="$(ant_property_value "$build_file" "project.version")"
+            ;;
+          *)
+            die "지원하지 않는 NEXUS_BUILD_TOOL 값입니다. current=$build_tool"
+            ;;
+        esac
+
+        if [[ -z "$version_value" ]]; then
+          die "프로젝트 버전을 확인할 수 없습니다. NEXUS_PROJECT_VERSION을 설정하세요. file=$build_file"
+        fi
+
+        printf '%s\n' "$version_value"
+      }
+
+      resolve_group_id() {
+        local build_tool="$1"
+        local build_file="$2"
+        local group_id=""
+
+        if [[ -n "${NEXUS_GROUP_ID:-}" ]]; then
+          printf '%s\n' "$NEXUS_GROUP_ID"
+          return 0
+        fi
+
+        case "$build_tool" in
+          maven)
+            group_id="$(maven_project_tag_value "$build_file" "groupId")"
+
+            if [[ -z "$group_id" ]]; then
+              group_id="$(first_xml_tag_value "$build_file" "groupId")"
+            fi
+            ;;
+          gradle)
+            group_id="$(gradle_assignment_value "$build_file" "group")"
+            ;;
+          ant)
+            group_id="${ANT_NEXUS_GROUP_ID:-}"
+            ;;
+          *)
+            die "지원하지 않는 NEXUS_BUILD_TOOL 값입니다. current=$build_tool"
+            ;;
+        esac
+
+        printf '%s\n' "$group_id"
+      }
+
+      resolve_artifact_id() {
+        local build_tool="$1"
+        local build_file="$2"
+        local project_dir="$3"
+        local artifact_id=""
+
+        if [[ -n "${NEXUS_ARTIFACT_ID:-}" ]]; then
+          printf '%s\n' "$NEXUS_ARTIFACT_ID"
+          return 0
+        fi
+
+        case "$build_tool" in
+          maven)
+            artifact_id="$(maven_project_tag_value "$build_file" "artifactId")"
+            ;;
+          gradle)
+            if [[ -f "${project_dir}/settings.gradle" ]]; then
+              artifact_id="$(gradle_assignment_value "${project_dir}/settings.gradle" "rootProject.name")"
+            elif [[ -f "${project_dir}/settings.gradle.kts" ]]; then
+              artifact_id="$(gradle_assignment_value "${project_dir}/settings.gradle.kts" "rootProject.name")"
+            fi
+
+            if [[ -z "$artifact_id" ]]; then
+              artifact_id="$(basename "$project_dir")"
+            fi
+            ;;
+          ant)
+            artifact_id="$(ant_project_name "$build_file")"
+
+            if [[ -z "$artifact_id" ]]; then
+              artifact_id="$(basename "$project_dir")"
+            fi
+            ;;
+          *)
+            die "지원하지 않는 NEXUS_BUILD_TOOL 값입니다. current=$build_tool"
+            ;;
+        esac
+
+        if [[ -z "$artifact_id" ]]; then
+          die "artifactId를 확인할 수 없습니다. NEXUS_ARTIFACT_ID를 설정하세요. file=$build_file"
+        fi
+
+        printf '%s\n' "$artifact_id"
+      }
+
+      resolve_packaging() {
+        local build_tool="$1"
+        local build_file="$2"
+        local packaging=""
+
+        if [[ -n "${NEXUS_PACKAGING:-}" ]]; then
+          printf '%s\n' "$NEXUS_PACKAGING"
+          return 0
+        fi
+
+        case "$build_tool" in
+          maven)
+            packaging="$(maven_project_tag_value "$build_file" "packaging")"
+
+            if [[ -z "$packaging" ]]; then
+              packaging="jar"
+            fi
+            ;;
+          gradle)
+            if grep -Eq "id[[:space:]]+['\"]war['\"]|id\\(['\"]war['\"]\\)" "$build_file"; then
+              packaging="war"
+            else
+              packaging="jar"
+            fi
+            ;;
+          ant)
+            packaging="jar"
+            ;;
+          *)
+            die "지원하지 않는 NEXUS_BUILD_TOOL 값입니다. current=$build_tool"
+            ;;
+        esac
+
+        printf '%s\n' "$packaging"
+      }
+
+      derive_artifact_file() {
+        local build_tool="$1"
+        local project_dir="$2"
+        local artifact_id="$3"
+        local project_version="$4"
+        local packaging="$5"
+        local output_dir
+        local artifact_base_name
+
+        if [[ -n "${NEXUS_ARTIFACT_FILE:-}" ]]; then
+          printf '%s\n' "$NEXUS_ARTIFACT_FILE"
+          return 0
+        fi
+
+        artifact_base_name="${NEXUS_ARTIFACT_BASE_NAME:-${artifact_id}-${project_version}}"
+
+        case "$build_tool" in
+          maven)
+            output_dir="${project_dir}/target"
+            ;;
+          gradle)
+            output_dir="${project_dir}/build/libs"
+            ;;
+          ant)
+            output_dir="${project_dir}/build"
+            ;;
+          *)
+            die "지원하지 않는 NEXUS_BUILD_TOOL 값입니다. current=$build_tool"
+            ;;
+        esac
+
+        printf '%s/%s.%s\n' "$output_dir" "$artifact_base_name" "$packaging"
+      }
+
+      derive_component_version() {
+        local base_version="$1"
+        local tag_version
+
+        if [[ -n "${NEXUS_COMPONENT_VERSION:-}" ]]; then
+          printf '%s\n' "$NEXUS_COMPONENT_VERSION"
+          return 0
+        fi
+
+        if [[ -n "${NEXUS_VERSION:-}" ]]; then
+          printf '%s\n' "$NEXUS_VERSION"
+          return 0
+        fi
+
+        if [[ -n "${CI_COMMIT_TAG:-}" ]]; then
+          tag_version="$CI_COMMIT_TAG"
+
+          if is_boolean_true "${NEXUS_STRIP_TAG_PREFIX:-true}" && [[ "$tag_version" == v* ]]; then
+            tag_version="${tag_version#v}"
+          fi
+
+          printf '%s\n' "$tag_version"
+          return 0
+        fi
+
+        if [[ -n "${CI_COMMIT_SHORT_SHA:-}" ]]; then
+          printf '%s-%s\n' "$base_version" "$CI_COMMIT_SHORT_SHA"
+          return 0
+        fi
+
+        printf '%s-local\n' "$base_version"
+      }
+
+      file_extension() {
+        local file_path="$1"
+        local file_name
+
+        file_name="$(basename "$file_path")"
+
+        if [[ "$file_name" != *.* ]]; then
+          die "artifact 파일 확장자를 확인할 수 없습니다. file=$file_path"
+        fi
+
+        printf '%s\n' "${file_name##*.}"
+      }
+
+      content_type_for_extension() {
+        local extension="$1"
+
+        case "$extension" in
+          jar|war|ear)
+            printf 'application/java-archive\n'
+            ;;
+          pom|xml)
+            printf 'application/xml\n'
+            ;;
+          zip)
+            printf 'application/zip\n'
+            ;;
+          *)
+            printf 'application/octet-stream\n'
+            ;;
+        esac
+      }
+
+      build_curl_common_args() {
+        local connect_timeout="$1"
+        local max_time="$2"
+
+        CURL_COMMON_ARGS=(
+          --silent
+          --show-error
+          --fail
+          --retry 3
+          --retry-delay 5
+          --connect-timeout "$connect_timeout"
+          --max-time "$max_time"
+          --user "${NEXUS_USERNAME_VALUE}:${NEXUS_PASSWORD_VALUE}"
+        )
+
+        if ! is_boolean_true "${NEXUS_VERIFY_TLS:-true}"; then
+          log "NEXUS_VERIFY_TLS=false 이므로 TLS 인증서 검증을 비활성화합니다. 운영 환경 기본값으로 권장하지 않습니다."
+          CURL_COMMON_ARGS+=(--insecure)
+        fi
+      }
+
+      upload_maven2_component() {
+        local component_url="$1"
+        local artifact_file="$2"
+        local extension="$3"
+        local content_type="$4"
+        local component_version="$5"
+        local packaging
+
+        require_env NEXUS_GROUP_ID
+        require_env NEXUS_ARTIFACT_ID
+
+        packaging="${NEXUS_PACKAGING:-$extension}"
+        build_curl_common_args "$NEXUS_CONNECT_TIMEOUT_SECONDS" "$NEXUS_MAX_TIME_SECONDS"
+
+        if is_boolean_true "${NEXUS_DRY_RUN:-false}"; then
+          log "DRY RUN: Maven2 component upload"
+          log "repository=$NEXUS_REPOSITORY groupId=$NEXUS_GROUP_ID artifactId=$NEXUS_ARTIFACT_ID version=$component_version packaging=$packaging file=$artifact_file"
+          return 0
+        fi
+
+        curl "${CURL_COMMON_ARGS[@]}" \
+          --request POST \
+          --form "maven2.generate-pom=true" \
+          --form "maven2.groupId=${NEXUS_GROUP_ID}" \
+          --form "maven2.artifactId=${NEXUS_ARTIFACT_ID}" \
+          --form "maven2.version=${component_version}" \
+          --form "maven2.packaging=${packaging}" \
+          --form "maven2.asset1=@${artifact_file};type=${content_type}" \
+          --form "maven2.asset1.extension=${extension}" \
+          "$component_url" >/dev/null
+      }
+
+      upload_raw_component() {
+        local component_url="$1"
+        local artifact_file="$2"
+        local content_type="$3"
+        local component_version="$4"
+        local file_name
+        local group_path
+        local raw_directory
+
+        file_name="${NEXUS_RAW_FILENAME:-$(basename "$artifact_file")}"
+        group_path="${NEXUS_GROUP_ID:-${CI_PROJECT_NAMESPACE:-com.example}}"
+        group_path="$(printf '%s' "$group_path" | tr '.' '/')"
+        raw_directory="${NEXUS_RAW_DIRECTORY:-/${group_path}/${NEXUS_ARTIFACT_ID:-${CI_PROJECT_NAME:-artifact}}/${component_version}}"
+
+        build_curl_common_args "$NEXUS_CONNECT_TIMEOUT_SECONDS" "$NEXUS_MAX_TIME_SECONDS"
+
+        if is_boolean_true "${NEXUS_DRY_RUN:-false}"; then
+          log "DRY RUN: Raw component upload"
+          log "repository=$NEXUS_REPOSITORY directory=$raw_directory filename=$file_name file=$artifact_file"
+          return 0
+        fi
+
+        curl "${CURL_COMMON_ARGS[@]}" \
+          --request POST \
+          --form "raw.directory=${raw_directory}" \
+          --form "raw.asset1=@${artifact_file};type=${content_type}" \
+          --form "raw.asset1.filename=${file_name}" \
+          "$component_url" >/dev/null
+      }
+
+      require_command awk
+      require_command basename
+      require_command curl
+      require_command grep
+      require_command head
+      require_command sed
+      require_command tr
+
+      require_env NEXUS_URL
+      require_env NEXUS_REPOSITORY
+
+      NEXUS_USERNAME_VALUE="${NEXUS_USERNAME:-${NEXUS_USER:-}}"
+      NEXUS_PASSWORD_VALUE="${NEXUS_PASSWORD:-${NEXUS_PASS:-}}"
+      NEXUS_REPOSITORY_FORMAT="${NEXUS_REPOSITORY_FORMAT:-maven2}"
+      NEXUS_CONNECT_TIMEOUT_SECONDS="${NEXUS_CONNECT_TIMEOUT_SECONDS:-10}"
+      NEXUS_MAX_TIME_SECONDS="${NEXUS_MAX_TIME_SECONDS:-300}"
+
+      if [[ -z "$NEXUS_USERNAME_VALUE" ]]; then
+        die "NEXUS_USERNAME 또는 NEXUS_USER 환경 변수가 필요합니다."
+      fi
+
+      if [[ -z "$NEXUS_PASSWORD_VALUE" ]]; then
+        die "NEXUS_PASSWORD 또는 NEXUS_PASS 환경 변수가 필요합니다."
+      fi
+
+      if ! is_positive_integer "$NEXUS_CONNECT_TIMEOUT_SECONDS"; then
+        die "NEXUS_CONNECT_TIMEOUT_SECONDS 값은 양의 정수여야 합니다. current=$NEXUS_CONNECT_TIMEOUT_SECONDS"
+      fi
+
+      if ! is_positive_integer "$NEXUS_MAX_TIME_SECONDS"; then
+        die "NEXUS_MAX_TIME_SECONDS 값은 양의 정수여야 합니다. current=$NEXUS_MAX_TIME_SECONDS"
+      fi
+
+      NEXUS_PROJECT_DIR_VALUE="$(detect_project_dir)"
+      NEXUS_BUILD_FILE_VALUE="$(detect_build_file "$NEXUS_PROJECT_DIR_VALUE")"
+      NEXUS_BUILD_TOOL_VALUE="$(detect_build_tool "$NEXUS_BUILD_FILE_VALUE")"
+
+      if [[ ! -f "$NEXUS_BUILD_FILE_VALUE" ]]; then
+        die "빌드 파일이 존재하지 않습니다. file=$NEXUS_BUILD_FILE_VALUE"
+      fi
+
+      NEXUS_PROJECT_VERSION="$(resolve_project_version "$NEXUS_BUILD_TOOL_VALUE" "$NEXUS_BUILD_FILE_VALUE" "$NEXUS_PROJECT_DIR_VALUE")"
+      NEXUS_GROUP_ID="$(resolve_group_id "$NEXUS_BUILD_TOOL_VALUE" "$NEXUS_BUILD_FILE_VALUE")"
+      NEXUS_ARTIFACT_ID="$(resolve_artifact_id "$NEXUS_BUILD_TOOL_VALUE" "$NEXUS_BUILD_FILE_VALUE" "$NEXUS_PROJECT_DIR_VALUE")"
+      NEXUS_PACKAGING="$(resolve_packaging "$NEXUS_BUILD_TOOL_VALUE" "$NEXUS_BUILD_FILE_VALUE")"
+      NEXUS_ARTIFACT_FILE="$(derive_artifact_file "$NEXUS_BUILD_TOOL_VALUE" "$NEXUS_PROJECT_DIR_VALUE" "$NEXUS_ARTIFACT_ID" "$NEXUS_PROJECT_VERSION" "$NEXUS_PACKAGING")"
+
+      log "Resolved build metadata. tool=$NEXUS_BUILD_TOOL_VALUE build_file=$NEXUS_BUILD_FILE_VALUE groupId=${NEXUS_GROUP_ID:-N/A} artifactId=$NEXUS_ARTIFACT_ID projectVersion=$NEXUS_PROJECT_VERSION packaging=$NEXUS_PACKAGING artifactFile=$NEXUS_ARTIFACT_FILE"
+
+      if [[ ! -f "$NEXUS_ARTIFACT_FILE" ]]; then
+        die "Nexus에 업로드할 artifact 파일이 없습니다. file=$NEXUS_ARTIFACT_FILE"
+      fi
+
+      if [[ ! -s "$NEXUS_ARTIFACT_FILE" ]]; then
+        die "Nexus에 업로드할 artifact 파일이 비어 있습니다. file=$NEXUS_ARTIFACT_FILE"
+      fi
+
+      component_version="$(derive_component_version "$NEXUS_PROJECT_VERSION")"
+      artifact_extension="$(file_extension "$NEXUS_ARTIFACT_FILE")"
+      artifact_content_type="${NEXUS_CONTENT_TYPE:-$(content_type_for_extension "$artifact_extension")}"
+      component_url="${NEXUS_URL%/}/service/rest/v1/components?repository=${NEXUS_REPOSITORY}"
+
+      case "$NEXUS_REPOSITORY_FORMAT" in
+        maven2)
+          upload_maven2_component "$component_url" "$NEXUS_ARTIFACT_FILE" "$artifact_extension" "$artifact_content_type" "$component_version"
+          ;;
+        raw)
+          upload_raw_component "$component_url" "$NEXUS_ARTIFACT_FILE" "$artifact_content_type" "$component_version"
+          ;;
+        *)
+          die "지원하지 않는 NEXUS_REPOSITORY_FORMAT 값입니다. current=$NEXUS_REPOSITORY_FORMAT supported=maven2,raw"
+          ;;
+      esac
+
+      log "Nexus upload completed. repository=$NEXUS_REPOSITORY format=$NEXUS_REPOSITORY_FORMAT version=$component_version file=$NEXUS_ARTIFACT_FILE"
+
+maven-nexus-upload:
+  extends: .nexus-upload-template
+  needs:
+    - job: maven-build
+      artifacts: true
+      optional: true
+  variables:
+    NEXUS_PROJECT_KIND: 'maven'
+  rules:
+    - if: '$NEXUS_UPLOAD_ENABLED == "true" && $MAVEN_BUILD_ENABLED == "true" && $CI_COMMIT_TAG'
+      when: manual
+    - if: '$NEXUS_UPLOAD_ENABLED == "true" && $MAVEN_BUILD_ENABLED == "true" && $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"'
+      when: manual
+    - if: '$NEXUS_UPLOAD_ENABLED == "true" && $MAVEN_BUILD_ENABLED == "true" && $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^release\//'
+      when: manual
+    - when: never
+
+gradle-nexus-upload:
+  extends: .nexus-upload-template
+  needs:
+    - job: gradle-build
+      artifacts: true
+      optional: true
+  variables:
+    NEXUS_PROJECT_KIND: 'gradle'
+  rules:
+    - if: '$NEXUS_UPLOAD_ENABLED == "true" && $GRADLE_BUILD_ENABLED == "true" && $CI_COMMIT_TAG'
+      when: manual
+    - if: '$NEXUS_UPLOAD_ENABLED == "true" && $GRADLE_BUILD_ENABLED == "true" && $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"'
+      when: manual
+    - if: '$NEXUS_UPLOAD_ENABLED == "true" && $GRADLE_BUILD_ENABLED == "true" && $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^release\//'
+      when: manual
+    - when: never
+
+ant-nexus-upload:
+  extends: .nexus-upload-template
+  needs:
+    - job: ant-build
+      artifacts: true
+      optional: true
+  variables:
+    NEXUS_PROJECT_KIND: 'ant'
+    ANT_NEXUS_GROUP_ID: 'com.example'
+  rules:
+    - if: '$NEXUS_UPLOAD_ENABLED == "true" && $ANT_BUILD_ENABLED == "true" && $CI_COMMIT_TAG'
+      when: manual
+    - if: '$NEXUS_UPLOAD_ENABLED == "true" && $ANT_BUILD_ENABLED == "true" && $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"'
+      when: manual
+    - if: '$NEXUS_UPLOAD_ENABLED == "true" && $ANT_BUILD_ENABLED == "true" && $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^release\//'
+      when: manual
+    - when: never

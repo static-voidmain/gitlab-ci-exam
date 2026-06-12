@@ -1,0 +1,34 @@
+# 이 저장소 자체를 검증하기 위한 로컬 파이프라인입니다.
+# 하위 프로젝트에서는 examples/child-project.gitlab-ci.yml처럼 include:project로 참조하세요.
+# 민감 정보(Nexus 계정, GitLab API Token, CodeRay CLI 명령)는 GitLab CI/CD 변수로만 주입하세요.
+
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      when: always
+    - if: '$CI_COMMIT_TAG'
+      when: always
+    - if: '$CI_COMMIT_BRANCH'
+      when: always
+    - when: never
+
+variables:
+  MAVEN_BUILD_ENABLED: 'true'
+  GRADLE_BUILD_ENABLED: 'true'
+  ANT_BUILD_ENABLED: 'true'
+  MAVEN_COVERAGE_ENABLED: 'true'
+  GRADLE_COVERAGE_ENABLED: 'true'
+  ANT_COVERAGE_ENABLED: 'true'
+  MAVEN_SBOM_ENABLED: 'true'
+  GRADLE_SBOM_ENABLED: 'true'
+  ANT_SBOM_ENABLED: 'true'
+  VERSION_BUMP_ENABLED: 'true'
+
+include:
+  - local: 'ci/common.yml'
+  - local: 'ci/build.yml'
+  - local: 'scripts/check_coverage.yml'
+  - local: 'scripts/generate_sbom.yml'
+  - local: 'scripts/coderay_scan.yml'
+  - local: 'scripts/upload_to_nexus.yml'
+  - local: 'scripts/version_bump.yml'
